@@ -1,0 +1,45 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual Environment ──
+venv/
+.venv/
+env/
+
+# ── Environment Variables (API Keys) ──
+.env
+*.env
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Data files (quá lớn cho Git) ──
+Data/*.csv
+Data/pg_vector_data/
+
+# ── HuggingFace cache ──
+hf_cache/
+
+# ── Node modules (Frontend) ──
+node_modules/
+frontend/node_modules/
+
+# ── Misc ──
+*.log
+*.tmp
+graph001.png
