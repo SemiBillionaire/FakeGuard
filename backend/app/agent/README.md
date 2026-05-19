@@ -6,27 +6,39 @@ Tài liệu này trình bày tổng quan cách thức hoạt động của mô h
 
 ## 🎯 1. Tổng Quan Các Bước Hoạt Động Của RAG LLM
 
-Quy trình kiểm chứng một bài báo/tin đồn sẽ đi qua **4 bước tuần tự** do LangGraph điều phối:
+Quy trình kiểm chứng một bài báo/tin đồn hiện chạy theo **batch workflow** do LangGraph điều phối:
 
-1. **Bước 1: Tóm tắt & Phân rã (Extraction)**
-   - **Tóm tắt (Summarizer):** AI nhận một bài báo dài hoặc nội dung URL và tóm tắt lại các ý chính.
-   - **Trích xuất luận điểm (Extractor):** Bóc tách bài tóm tắt thành các khẳng định cụ thể, độc lập (Sub-claims). *Ví dụ: "Hà Nội sẽ cấm xe máy vào năm 2026."*
+```mermaid
+flowchart TD
+    A["START"] --> B["extract"]
+    B --> C["retrieve_internal"]
+    C --> D["judge_internal"]
+    D --> E{"Còn claim NEI hoặc cần web?"}
+    E -- "Có" --> F["search_web"]
+    F --> G["judge_after_web"]
+    G --> H["synthesize"]
+    E -- "Không" --> H
+    H --> I["END"]
+```
+
+1. **Bước 1: Extract**
+   - Node `extract` nhận văn bản đầu vào, tóm tắt, xác định `category`, trích xuất `global_entities` và tách bài thành các `sub_claims`.
+   - Mỗi sub-claim giữ thêm `entities`, `time_refs`, `needs_web`, `priority` để các node sau dùng lại.
 
 2. **Bước 2: Kiểm chứng Lớp 1 - Nội bộ (RAG Retriever)**
-   - Với mỗi luận điểm, Agent sẽ dùng `tools/rag_retriever.py` để tra cứu trong cơ sở dữ liệu `knowledge_base` (PostgreSQL + pgvector).
-   - Agent đối chiếu bằng chứng với luận điểm và đưa ra 1 trong 3 trạng thái:
+   - Node `retrieve_internal` truy xuất evidence cho toàn bộ sub-claims bằng Vector Search + Entity Keyword Search + RRF.
+   - Node `judge_internal` gọi LLM một lần để đánh giá tất cả claims dựa trên `kb_evidence`.
+   - Mỗi claim nhận 1 trong 3 trạng thái:
      - ✅ **SUPPORTED** (Tin chuẩn)
      - ❌ **REFUTED** (Tin giả)
      - ⚠️ **NEI** (Not Enough Information - Không đủ thông tin)
 
 3. **Bước 3: Kiểm chứng Lớp 2 - Internet (Web Search)**
-   - Nếu kết quả ở Lớp 1 trả về là **NEI** (Có thể do tin tức quá mới hoặc chưa từng có trong DB), Agent tự động kích hoạt `tools/searcher.py`.
-   - Tìm kiếm trên Internet (qua Tavily API) lấy thông tin từ các trang báo uy tín.
-   - Thực hiện đối chiếu lại một lần nữa để chốt trạng thái SUPPORTED/REFUTED/NEI.
+   - Nếu còn claim **NEI** hoặc `needs_web=True`, node `search_web` gọi Tavily API để tìm evidence mới.
+   - Node `judge_after_web` chỉ judge lại các claim còn NEI, không ghi đè claim đã chốt.
 
 4. **Bước 4: Tổng hợp & Phản hồi (Synthesizer)**
-   - Agent gom tất cả các luận điểm đã được kiểm chứng.
-   - Soạn thảo một báo cáo Fact-check bằng ngôn ngữ tự nhiên, minh bạch, có đính kèm đầy đủ link nguồn (URL) làm bằng chứng cho người dùng.
+   - Node `synthesize` không gọi LLM. Nó tổng hợp `final_verdict`, `confidence`, `explanation` và `sources` từ kết quả từng claim.
 
 ---
 
@@ -49,37 +61,35 @@ backend/app/agent/
 │
 ├── tools/                  # Các công cụ mở rộng năng lực cho AI
 │   ├── __init__.py
-│   ├── rag_retriever.py    # Code chuyển query thành vector và tìm trong PostgreSQL
 │   └── searcher.py         # Code tích hợp API tìm kiếm Internet (Tavily/Google)
 │
 └── nodes/                  # Các "Trạm kiểm soát" (Node) trong đồ thị LangGraph
     ├── __init__.py
-    ├── summarizer.py       # Node 1: Tóm tắt bài báo đầu vào
-    ├── extractor.py        # Node 2: Trích xuất các Sub-claims
-    ├── verifier.py         # Node 3: Kiểm chứng từng Claim (dùng Tools)
-    └── synthesizer.py      # Node 4: Viết báo cáo tổng hợp gửi về Frontend
+    ├── extract.py          # Tóm tắt + tách sub-claims + entity/category
+    ├── retrieve_internal.py # Truy xuất evidence nội bộ từ PostgreSQL + pgvector
+    ├── judge.py            # judge_internal + judge_after_web
+    ├── search_web.py       # Wrapper gọi Tavily theo từng claim cần web
+    └── synthesize.py       # Tổng hợp verdict cuối bằng rule
 ```
 
 ---
 
 ## 🚀 3. Các Bước Khuyến Nghị Tiếp Theo (Next Steps)
 
-Để hiện thực hóa kiến trúc trên, dưới đây là lộ trình lập trình theo thứ tự tối ưu:
+Các node lõi đã được tách theo workflow trên. Những việc tiếp theo nên làm theo thứ tự:
 
-### Phase 1: Xây dựng Bộ Công Cụ (Tools)
-- **Code `tools/rag_retriever.py`:** Viết hàm nhận vào câu hỏi `string`, thực hiện embed và query trả về `Top K` documents từ PostgreSQL.
-- **Code `tools/searcher.py`:** Đăng ký API Key của Tavily (Hoặc Google Search API) và viết hàm nhận query trả về nội dung tìm kiếm trên web.
+1. **Test graph bằng fake node**
+   - Kiểm tra nhánh `SUPPORTED/REFUTED` từ `judge_internal` đi thẳng tới `synthesize`.
+   - Kiểm tra nhánh `NEI` đi qua `search_web` rồi `judge_after_web`.
 
-### Phase 2: Xây dựng Node Mở Đầu (Extraction & Prompting)
-- **Code `core/prompts.py`:** Viết các hướng dẫn (system prompts) chuẩn kỹ sư prompt (VD: "Bạn là một nhà báo điều tra... Không được bịa đặt... Phải trả về chuẩn JSON...").
-- **Code `nodes/extractor.py`:** Sử dụng Gemini kết hợp `PydanticOutputParser` để bóc tách thông tin thành List các Sub-claims.
+2. **Test graph tích hợp có API thật**
+   - Chạy một claim có bằng chứng trong database để kiểm tra nhánh chỉ dùng RAG + LLM.
+   - Chạy một claim mới/thiếu dữ liệu để kiểm tra nhánh Tavily + LLM.
 
-### Phase 3: Xây dựng Logic Đối Chiếu (Verification Node)
-- **Code `nodes/verifier.py`:** Xây dựng vòng lặp cho mỗi Sub-claim:
-  - Gọi Tool Lớp 1 (RAG). Hỏi LLM phán quyết.
-  - Nếu phán quyết là NEI, gọi Tool Lớp 2 (Search). Hỏi LLM phán quyết lần cuối.
-  - Cập nhật nhãn (SUPPORTED/REFUTED/NEI) vào `state.py`.
+3. **Tích hợp graph vào FastAPI**
+   - Tạo endpoint nhận text đầu vào.
+   - Invoke `agent` hoặc `build_graph()` và trả về `final_verdict`, `confidence`, `explanation`, `sources`, `sub_claims`.
 
-### Phase 4: Nối Đồ Thị và Khởi Chạy (LangGraph)
-- **Code `graph.py`:** Map các Node lại với nhau (`add_node`), thiết lập Cạnh (`add_edge`), chỉ định điểm `START` và `END`.
-- Tích hợp Graph vào file FastApi (`main.py`) để frontend có thể POST dữ liệu lên và lấy kết quả.
+4. **Kết nối frontend**
+   - Gửi input từ giao diện sang endpoint backend.
+   - Hiển thị verdict tổng, confidence, danh sách sub-claims và nguồn bằng chứng.

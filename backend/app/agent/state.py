@@ -1,17 +1,27 @@
-from typing import Annotated, Literal
-from typing_extensions import TypedDict
+from typing import Annotated
+from typing_extensions import NotRequired, TypedDict
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 
 class SubClaim(TypedDict):
     """
-    @brief Class biểu diễn 1 Sub-claim (luận điểm phụ) của bài báo
+    @brief Class biểu diễn 1 sub-claim trong pipeline kiểm chứng.
+    @details Mỗi claim tự giữ entity, bằng chứng và kết quả judge để các node sau
+             không phải dùng danh sách evidence cấp state gây lệch index.
     """
     claim: str
-    verdict: str | None          # SUPPORTED / REFUTED / NEI
-    confidence: float | None
-    reasoning: str | None        # Giải thích ngắn
-    evidence: list[dict] | None  # [{source, title, snippet}]
+    entities: NotRequired[list[str]]
+    time_refs: NotRequired[list[str]]
+    needs_web: NotRequired[bool]
+    priority: NotRequired[str]       # high / medium / low
+
+    kb_evidence: NotRequired[list[dict] | None]
+    web_evidence: NotRequired[list[dict] | None]
+
+    verdict: NotRequired[str | None]       # SUPPORTED / REFUTED / NEI
+    confidence: NotRequired[float | None]
+    reasoning: NotRequired[str | None]
+    evidence: NotRequired[list[dict] | None]
 
 class AgentState(TypedDict):
     """
@@ -22,6 +32,8 @@ class AgentState(TypedDict):
     user_input: str              # Input gốc (text hoặc URL)
     article_text: str | None     # Nội dung bài báo (nếu input = URL)
     summary: str | None          # Đoạn text tóm tắt
+    category: str | None         # Môn thể thao: bong-da / bong-ro / tennis / bong-chay / unknown
+    global_entities: list[str]   # Entity chung toàn bài
 
     sub_claims: list[SubClaim]   # Danh sách luận điểm
     current_idx: int             # Chỉ số claim đang xử lý
@@ -33,3 +45,6 @@ class AgentState(TypedDict):
     confidence: float | None
     explanation: str | None
     sources: list[dict]
+
+    llm_calls: int               # Số lần gọi LLM trong workflow chính
+    tavily_calls: int            # Số lần gọi Tavily API

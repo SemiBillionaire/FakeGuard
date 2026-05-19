@@ -1,10 +1,12 @@
 fastapi
 uvicorn[standard]
 pydantic-settings
-langgraph
-langchain-core
-langchain-google-genai
-langchain-groq
+langgraph==0.3.34
+langchain==0.3.28
+langchain-core==0.3.84
+langchain-text-splitters==0.3.11
+langchain-google-genai==2.1.12
+langchain-groq==0.3.8
 tavily-python
 sentence-transformers
 underthesea
@@ -15,5 +17,6 @@ asyncpg
 httpx
 beautifulsoup4
 lxml
-langchain
 pydantic
+protobuf==5.29.4
+grpcio-status==1.71.0

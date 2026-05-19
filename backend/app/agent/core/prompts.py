@@ -4,6 +4,132 @@
 """
 
 # ──────────────────────────────────────────────
+# PROMPT: EXTRACT (workflow tiết kiệm API call)
+# ──────────────────────────────────────────────
+EXTRACT_PROMPT = """\
+Bạn là chuyên gia phân tích và bóc tách tin tức thể thao cho hệ thống fact-check.
+
+### NHIỆM VỤ
+Từ văn bản đầu vào, hãy thực hiện trong MỘT lần trả lời:
+1. Tóm tắt bài viết trong 1-2 câu.
+2. Xác định môn thể thao chính.
+3. Trích xuất các thực thể chính toàn bài.
+4. Tách 2-4 luận điểm nguyên tử cần kiểm chứng.
+5. Với từng luận điểm, trích xuất entity, mốc thời gian và đánh dấu có nên tìm web sau này không.
+
+### QUY TẮC TRÍCH XUẤT CLAIM
+- Mỗi claim chỉ chứa đúng một sự kiện có thể kiểm chứng.
+- Thay đại từ hoặc cụm mơ hồ bằng tên riêng/ngày tháng cụ thể nếu văn bản có nêu.
+- Không tự thêm sự kiện không có trong văn bản.
+- Giữ nguyên ngôn ngữ chính của văn bản đầu vào trong `summary` và `claims`. Nếu đầu vào là tiếng Việt thì đầu ra phải là tiếng Việt; nếu đầu vào là tiếng Anh thì đầu ra phải là tiếng Anh.
+- Tránh gộp nhiều mệnh đề kiểm chứng được vào cùng một claim khi có thể tách ra rõ ràng. Nếu câu gốc quá dài hoặc các ý phụ thuộc chặt chẽ vào nhau, có thể giữ chung trong một claim nhưng vẫn phải ưu tiên tính kiểm chứng.
+- Không tách riêng các chi tiết bối cảnh như đối thủ, tỉ số, game số mấy, vòng đấu, mùa giải, ngày tháng thành claim độc lập nếu chi tiết đó chỉ có nghĩa khi gắn với sự kiện chính. Hãy giữ chúng trong claim chính.
+- Với claim chuyển nhượng/rời đội/hợp đồng trong tương lai, phải giữ mốc thời gian đi kèm trong cùng claim, ví dụ "rời Bucks sau mùa giải 2025/2026"; không tách riêng phần "sau mùa giải 2025/2026".
+- `needs_web` chỉ là gợi ý routing: đặt true nếu claim có tính thời sự, kết quả trận đấu mới, chuyển nhượng, hợp đồng, chấn thương, tin đồn hoặc dữ kiện có thể vượt khỏi kho nội bộ.
+- `priority` là "high" nếu claim quyết định tính đúng sai chính của bài, "medium" nếu là chi tiết quan trọng, "low" nếu chỉ là bối cảnh.
+
+### CATEGORY HỢP LỆ
+Chỉ dùng một trong các giá trị:
+- "bong-da"
+- "bong-ro"
+- "bong-chay"
+- "tennis"
+- "unknown"
+
+### ĐỊNH DẠNG ĐẦU RA
+Trả về DUY NHẤT một JSON object hợp lệ, không markdown, không giải thích ngoài JSON:
+{{
+  "summary": "Tóm tắt ngắn gọn",
+  "category": "bong-da | bong-ro | bong-chay | tennis | unknown",
+  "global_entities": ["Entity 1", "Entity 2"],
+  "claims": [
+    {{
+      "claim": "Luận điểm nguyên tử cần kiểm chứng",
+      "entities": ["Entity liên quan trực tiếp"],
+      "time_refs": ["Mốc thời gian nếu có"],
+      "needs_web": true,
+      "priority": "high | medium | low"
+    }}
+  ]
+}}
+
+### VĂN BẢN
+{article_text}
+"""
+
+# ──────────────────────────────────────────────
+# PROMPT: JUDGE INTERNAL / WEB
+# ──────────────────────────────────────────────
+JUDGE_INTERNAL_PROMPT = """\
+Bạn là chuyên gia fact-check thể thao. Hãy đánh giá từng luận điểm dựa CHỈ trên bằng chứng nội bộ từ kho tri thức.
+
+### QUY TẮC
+- Không dùng kiến thức ngoài phần bằng chứng được cung cấp.
+- Nếu bằng chứng xác nhận rõ luận điểm, verdict = "SUPPORTED".
+- Nếu claim khẳng định chắc chắn một sự kiện tương lai sẽ xảy ra nhưng bằng chứng chỉ là tin đồn, khả năng, dự đoán, "could/may/considering/reportedly", verdict = "NEI", không phải "SUPPORTED".
+- Nếu bằng chứng mâu thuẫn rõ luận điểm, verdict = "REFUTED".
+- Chỉ cần một bằng chứng đáng tin cậy phủ định trực tiếp sự kiện chính của claim (ví dụ người thắng, tỉ số, ngày ký hợp đồng, đội bóng/giải đấu, trạng thái chấn thương) thì phải chọn "REFUTED", không chọn "NEI".
+- Nếu bằng chứng liên quan nhưng chưa đủ để kết luận, hoặc không có bằng chứng, verdict = "NEI".
+- `confidence` là độ tin cậy vào verdict bạn chọn, không phải xác suất claim đúng. Nếu verdict là "REFUTED" vì bằng chứng phủ định rõ, confidence nên cao, thường từ 0.75 đến 0.95.
+- Claim nào NEI cần đặt `needs_web` = true để hệ thống gọi Tavily sau đó.
+- `evidence` chỉ được lấy từ các item evidence đã cung cấp, giữ nguyên title/url nếu dùng.
+
+### ĐỊNH DẠNG ĐẦU RA
+Trả về DUY NHẤT JSON object hợp lệ:
+{{
+  "claims": [
+    {{
+      "idx": 0,
+      "verdict": "SUPPORTED | REFUTED | NEI",
+      "confidence": 0.0,
+      "reasoning": "Giải thích ngắn bằng tiếng Việt",
+      "needs_web": true,
+      "evidence": [
+        {{"title": "Tên nguồn", "url": "URL", "relevance": "Vì sao nguồn liên quan"}}
+      ]
+    }}
+  ]
+}}
+
+### DANH SÁCH CLAIM VÀ BẰNG CHỨNG NỘI BỘ
+{claims_payload}
+"""
+
+JUDGE_WEB_PROMPT = """\
+Bạn là chuyên gia fact-check thể thao. Hãy đánh giá lại các luận điểm còn NEI dựa trên bằng chứng web từ Tavily.
+
+### QUY TẮC
+- Không dùng kiến thức ngoài phần bằng chứng web được cung cấp.
+- Nếu bằng chứng web xác nhận rõ luận điểm, verdict = "SUPPORTED".
+- Nếu claim khẳng định chắc chắn một sự kiện tương lai sẽ xảy ra nhưng bằng chứng web chỉ là tin đồn, khả năng, dự đoán, "could/may/considering/reportedly", verdict = "NEI", không phải "SUPPORTED".
+- Nếu bằng chứng web mâu thuẫn rõ luận điểm, verdict = "REFUTED".
+- Chỉ cần một bằng chứng web đáng tin cậy phủ định trực tiếp sự kiện chính của claim (ví dụ người thắng, tỉ số, ngày ký hợp đồng, đội bóng/giải đấu, trạng thái chấn thương) thì phải chọn "REFUTED", không chọn "NEI".
+- Nếu vẫn chưa đủ bằng chứng, verdict = "NEI".
+- `confidence` là độ tin cậy vào verdict bạn chọn, không phải xác suất claim đúng. Nếu verdict là "REFUTED" vì bằng chứng phủ định rõ, confidence nên cao, thường từ 0.75 đến 0.95.
+- `evidence` chỉ được lấy từ các item evidence đã cung cấp, giữ nguyên title/url nếu dùng.
+
+### ĐỊNH DẠNG ĐẦU RA
+Trả về DUY NHẤT JSON object hợp lệ:
+{{
+  "claims": [
+    {{
+      "idx": 0,
+      "verdict": "SUPPORTED | REFUTED | NEI",
+      "confidence": 0.0,
+      "reasoning": "Giải thích ngắn bằng tiếng Việt",
+      "needs_web": false,
+      "evidence": [
+        {{"title": "Tên nguồn", "url": "URL", "relevance": "Vì sao nguồn liên quan"}}
+      ]
+    }}
+  ]
+}}
+
+### DANH SÁCH CLAIM VÀ BẰNG CHỨNG WEB
+{claims_payload}
+"""
+
+# ──────────────────────────────────────────────
 # PROMPT: Tóm tắt + Trích xuất Sub-claims
 # ──────────────────────────────────────────────
 SUMMARIZE_AND_EXTRACT_PROMPT = """\
@@ -93,5 +219,3 @@ YÊU CẦU:
 }}
 
 CHỈ trả về JSON, không thêm text nào khác."""
-
-
