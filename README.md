@@ -17,6 +17,7 @@ FakeGuard là ứng dụng Web tích hợp AI hoạt động như một "Điều
    - ⚠️ **NEI - Not Enough Information** (Không đủ bằng chứng kết luận). 
    
    *Mọi kết luận đều đính kèm URL tham chiếu minh bạch.*
+5. **API Fact-check Hoàn Chỉnh:** FastAPI endpoint nhận một đoạn văn đầu vào, chạy LangGraph pipeline và trả về `verdict`, `confidence`, `claims`, `sources`.
 
 ---
 
@@ -40,39 +41,54 @@ DoAn/
 │   ├── app/
 │   │   ├── agent/                        # 🧠 Bộ não Agentic RAG (LangGraph)
 │   │   │   ├── core/
-│   │   │   │   └── prompts.py             # Tập trung toàn bộ System Prompts
+│   │   │   │   └── prompts.py            # Tập trung prompt cho extract/judge/synthesize
 │   │   │   ├── nodes/
-│   │   │   │   └── summarize_and_extract.py  # Node tóm tắt & trích xuất Sub-claims
+│   │   │   │   ├── extract.py            # Tóm tắt + tách sub-claims + category/entity
+│   │   │   │   ├── retrieve_internal.py  # Truy xuất evidence nội bộ từ PostgreSQL + pgvector
+│   │   │   │   ├── judge.py              # judge_internal + judge_after_web
+│   │   │   │   ├── search_web.py         # Gọi Tavily cho các claim còn NEI
+│   │   │   │   └── synthesize.py         # Tổng hợp verdict cuối
 │   │   │   ├── tools/
-│   │   │   │   ├── rag_retriever.py       # Lớp 1 — Internal RAG (3-Node Pipeline)
-│   │   │   │   └── searcher.py            # Lớp 2 — Web Search (Tavily API)
-│   │   │   ├── graph.py                   # Kết nối các Node thành Workflow
-│   │   │   └── state.py                   # AgentState truyền giữa các bước
+│   │   │   │   └── searcher.py           # Xếp hạng và lọc kết quả Tavily theo category/claim
+│   │   │   ├── config.py                 # Cấu hình LLM/Tavily cho agent
+│   │   │   ├── graph.py                  # LangGraph workflow fact-check
+│   │   │   ├── state.py                  # AgentState truyền giữa các bước
+│   │   │   └── README.md                 # Tài liệu riêng cho agent workflow
 │   │   ├── api/
-│   │   │   └── chat.py                    # API endpoint (FastAPI)
+│   │   │   └── chat.py                   # Endpoint /api/chat và /api/chat/stream
 │   │   ├── services/
-│   │   │   ├── crawler.py                 # Service crawl bài báo từ URL
-│   │   │   └── embedding.py               # Service nhúng vector (SentenceTransformers)
-│   │   ├── config.py                      # Cấu hình ứng dụng
-│   │   ├── db.py                          # Kết nối SQLAlchemy + pgvector
-│   │   └── main.py                        # Entry point FastAPI
+│   │   │   ├── crawler.py                # Crawl bài báo từ URL
+│   │   │   └── embedding.py              # SentenceTransformer embedding service
+│   │   ├── config.py                     # Cấu hình ứng dụng
+│   │   ├── db.py                         # Kết nối SQLAlchemy + pgvector
+│   │   └── main.py                       # Entry point FastAPI
 │   ├── scripts/
-│   │   ├── crawl_real_data.py             # Thu thập & deduplicate bài báo tự động
-│   │   └── seed_kb.py                     # Chunk, Embed & nạp dữ liệu vào DB
-│   ├── test_rag.py                        # Test luồng RAG Lớp 1
-│   ├── test_searcher.py                   # Test Web Search Lớp 2
-│   ├── test_summarize.py                  # Test tóm tắt & trích xuất
-│   ├── .env                               # Biến môi trường (API keys)
+│   │   ├── crawl_real_data.py            # Thu thập & deduplicate bài báo tự động
+│   │   └── seed_kb.py                    # Chunk, embed và nạp dữ liệu vào DB
+│   ├── test_chat.py                      # Unit test FastAPI chat endpoint
+│   ├── test_extract.py                   # Unit test node extract
+│   ├── test_extract_with_llm.py          # Test extract với Groq thật
+│   ├── test_graph.py                     # Unit test routing của LangGraph
+│   ├── test_graph_with_real_services.py  # Prototype CLI chạy graph thật
+│   ├── test_judge.py                     # Unit test judge_internal / judge_after_web
+│   ├── test_judge_with_rag.py            # Test judge với RAG + LLM thật
+│   ├── test_rag.py                       # Test retrieve_internal với database thật
+│   ├── test_search_web.py                # Unit test node search_web
+│   ├── test_search_web_tavily.py         # Test Tavily thật
+│   ├── test_synthesize.py                # Unit test node synthesize
+│   ├── .env                              # Biến môi trường cục bộ
+│   ├── .env.example                      # Mẫu biến môi trường
 │   └── requirements.txt
 ├── Data/
-│   ├── Data.md                            # Tài liệu & thống kê dữ liệu
-│   ├── real_news.csv                      # Dữ liệu crawl gốc (~10,885 bài)
-│   ├── real_news_prepared.csv             # Dữ liệu đã chuẩn bị (có cột ID)
-│   ├── fake.csv                           # Dữ liệu tin giả (tham khảo)
-│   └── pg_vector_data/                    # Volume PostgreSQL (Docker)
-├── frontend/                              # Giao diện người dùng (đang phát triển)
-├── docker-compose.yml                     # Docker: PostgreSQL + pgvector
-├── huong_dan_trien_khai_v2.md             # Hướng dẫn triển khai chi tiết
+│   ├── Data.md                           # Tài liệu & thống kê dữ liệu
+│   ├── real_news.csv                     # Dữ liệu crawl gốc (~10,885 bài)
+│   ├── real_news_prepared.csv            # Dữ liệu đã chuẩn bị (có cột ID)
+│   ├── fake.csv                          # Dữ liệu tin giả (tham khảo)
+│   └── pg_vector_data/                   # Volume PostgreSQL (Docker)
+├── frontend/
+│   └── README.md                         # Ghi chú cho phần giao diện đang phát triển
+├── docker-compose.yml                    # Docker: PostgreSQL + pgvector
+├── huong_dan_trien_khai_v2.md            # Hướng dẫn triển khai chi tiết
 └── README.md
 ```
 
@@ -80,7 +96,7 @@ DoAn/
 
 ## ✅ 4. Các Công Việc Đã Hoàn Thành
 
-Đến hiện tại, toàn bộ pipeline cốt lõi đã được xây dựng và kiểm thử thành công:
+Đến hiện tại, pipeline kiểm chứng cốt lõi đã được ghép thành prototype chạy được:
 
 1. **Thu Thập & Xử Lý Dữ Liệu:**
    - Crawler tự động bóc tách tin tức từ các chuyên trang thể thao uy tín (`perfect-tennis.com`, `webthethao.vn`, `sportando.basketball`, `mlbtraderumors.com`).
@@ -88,49 +104,78 @@ DoAn/
 2. **Nạp Dữ Liệu Vào Docker (VectorDB):**
    - Đã seed thành công gần **11,000 bài báo thể thao** (Bóng đá, Bóng rổ, Bóng chày, Tennis) vào PostgreSQL + pgvector chạy trên Docker.
    - Chunk size 800, overlap 100. Mỗi chunk lưu kèm metadata: `url`, `category`, `domain`, `title`, `publish_date`.
-3. **Lớp 1 — Internal RAG (Workflow 3-Node):**
-   - **Node 1 (Expand Query):** Gemini phân rã câu hỏi thành sub-queries, HyDE, và trích xuất entities.
-   - **Node 2 (Hybrid Retrieve):** Vector Search (pgvector) + Entity ILIKE Search, kết hợp RRF Fusion & Entity Heuristic Reranker.
-   - **Node 3 (Judge Evidence):** Groq (Llama-3.3-70B) kiểm chứng và đưa ra verdict.
-4. **Lớp 2 — Web Search (Tavily):**
-   - Hoàn thành `tools/searcher.py`: Tìm kiếm trên Internet khi Internal RAG không đủ bằng chứng (NEI).
-5. **Tóm Tắt & Trích Xuất Sub-claims:**
-   - Hoàn thành `nodes/summarize_and_extract.py`: Sử dụng Groq (Llama-3.3-70B) để tóm tắt bài báo và trích xuất các luận điểm cần kiểm chứng.
+3. **LangGraph Workflow mới đã hoàn thành:**
+   - `extract` -> `retrieve_internal` -> `judge_internal` -> `search_web` (nếu cần) -> `judge_after_web` -> `synthesize`.
+   - Có router tự động rẽ nhánh sang Tavily khi claim còn `NEI`.
+4. **Các node chính đã hoàn thành và đã tinh chỉnh:**
+   - `extract.py`: tóm tắt, tách sub-claims, gán `priority`, chuẩn hóa một số entity phổ biến.
+   - `retrieve_internal.py`: hybrid retrieval từ database nội bộ.
+   - `judge.py`: judge nội bộ, judge lại sau web, xử lý tốt hơn với claim tương lai/tin đồn.
+   - `search_web.py` + `tools/searcher.py`: Tavily search có domain filter, ranking theo category và loại claim.
+   - `synthesize.py`: tổng hợp verdict cuối theo rule dễ giải thích.
+5. **FastAPI chat endpoint đã hoạt động:**
+   - `POST /api/chat`: trả JSON verdict hoàn chỉnh.
+   - `POST /api/chat/stream`: trả SSE đơn giản một kết quả hoàn chỉnh.
+6. **Đã thử nghiệm bằng claim thật:**
+   - Claim `SUPPORTED/REAL`, `REFUTED/FAKE`, `NEI` đều đã được chạy qua prototype để sửa dần node.
 
 ---
 
 ## 🚀 5. Các Bước Tiếp Theo (Next Steps)
 
-Tất cả các công cụ (Tools) và Node riêng lẻ đã hoạt động. Các bước tiếp theo tập trung vào việc ghép nối và hoàn thiện sản phẩm:
+Phần graph và chat API đã xong ở mức backend prototype. Các bước tiếp theo nên là:
 
-- [ ] **Fine-tune các Node:** Tinh chỉnh prompt và logic xử lý cho từng Node (Summarize, RAG Retriever, Searcher, Verifier) để cải thiện độ chính xác.
-- [ ] **Ghép các Node — Hoàn thiện `graph.py`:** Kết nối tất cả các Node lại thành một Workflow LangGraph hoàn chỉnh với Router rẽ nhánh tự động (RAG → NEI → Web Search).
-- [ ] **Xây Dựng Backend API:** Tạo FastAPI endpoint nhận Request (text/URL) và stream kết quả trả về.
-- [ ] **Phát Triển Giao Diện (Frontend):** Thiết kế giao diện trò chuyện UI/UX trực quan cho người dùng tương tác với hệ thống.
+- [x] **Hoàn thiện `graph.py`:** Workflow LangGraph mới đã chạy được.
+- [x] **Xây dựng `chat.py`:** Endpoint API đã gọi được graph thật.
+- [ ] **Chuẩn hóa response và error handling cho frontend:** Gắn format ổn định hơn cho UI.
+- [ ] **Phát triển frontend:** Tạo form nhập text, gọi `/api/chat`, hiển thị verdict, confidence, claims, sources.
+- [ ] **Tiếp tục tinh chỉnh node:** Cải thiện retrieval/judge/search cho nhiều loại claim hơn.
+- [ ] **Bổ sung đánh giá hệ thống:** Tạo tập test claim chuẩn để đo precision/recall theo từng nhãn.
 
 ---
 
-## 🧪 6. Chạy Unit Test
+## 🧪 6. Kiểm Thử
 
 Mở terminal, trỏ vào thư mục `backend`. Sử dụng cờ `-X utf8` để đảm bảo in đúng ký tự tiếng Việt trên Windows.
 
-### 6.1. Test luồng Agentic RAG (Kiểm chứng nội bộ — Lớp 1)
+### 6.1. Test graph bằng fake nodes
 
 ```bash
 cd backend
+python -X utf8 test_graph.py
+```
+
+### 6.2. Chạy prototype graph thật với LLM/DB/Tavily
+
+```bash
+cd backend
+python -X utf8 test_graph_with_real_services.py --stage full
+```
+
+### 6.3. Test từng node
+
+```bash
+cd backend
+python -X utf8 test_extract.py
+python -X utf8 test_judge.py
+python -X utf8 test_synthesize.py
+python -X utf8 test_search_web.py
 python -X utf8 test_rag.py
 ```
 
-### 6.2. Test công cụ Web Search (Kiểm chứng — Lớp 2)
+### 6.4. Test với dịch vụ thật
 
 ```bash
 cd backend
-python -X utf8 test_searcher.py
+python -X utf8 test_extract_with_llm.py
+python -X utf8 test_judge_with_rag.py
+python -X utf8 test_search_web_tavily.py
 ```
 
-### 6.3. Test Tóm tắt & Trích xuất Sub-claims
+### 6.5. Test Chat API
 
 ```bash
 cd backend
-python -X utf8 test_summarize.py
+python -X utf8 test_chat.py
+uvicorn app.main:app --reload
 ```

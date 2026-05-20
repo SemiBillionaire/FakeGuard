@@ -74,22 +74,45 @@ backend/app/agent/
 
 ---
 
-## 🚀 3. Các Bước Khuyến Nghị Tiếp Theo (Next Steps)
+## 🚀 3. Tình Trạng Hiện Tại Và Bước Tiếp Theo
 
-Các node lõi đã được tách theo workflow trên. Những việc tiếp theo nên làm theo thứ tự:
+### Đã hoàn thành
 
-1. **Test graph bằng fake node**
-   - Kiểm tra nhánh `SUPPORTED/REFUTED` từ `judge_internal` đi thẳng tới `synthesize`.
-   - Kiểm tra nhánh `NEI` đi qua `search_web` rồi `judge_after_web`.
+1. **Hoàn thiện graph LangGraph**
+   - `extract -> retrieve_internal -> judge_internal -> search_web -> judge_after_web -> synthesize`
+   - Có router tự động bỏ qua Tavily khi không cần web evidence.
 
-2. **Test graph tích hợp có API thật**
-   - Chạy một claim có bằng chứng trong database để kiểm tra nhánh chỉ dùng RAG + LLM.
-   - Chạy một claim mới/thiếu dữ liệu để kiểm tra nhánh Tavily + LLM.
+2. **Hoàn thiện node kiểm chứng**
+   - `extract.py`, `retrieve_internal.py`, `judge.py`, `search_web.py`, `synthesize.py` đã hoạt động.
+   - Đã tinh chỉnh thêm cho claim tương lai, tin đồn, chuyển nhượng, typo entity phổ biến.
 
-3. **Tích hợp graph vào FastAPI**
-   - Tạo endpoint nhận text đầu vào.
-   - Invoke `agent` hoặc `build_graph()` và trả về `final_verdict`, `confidence`, `explanation`, `sources`, `sub_claims`.
+3. **Tích hợp backend API**
+   - `POST /api/chat`
+   - `POST /api/chat/stream`
 
-4. **Kết nối frontend**
-   - Gửi input từ giao diện sang endpoint backend.
-   - Hiển thị verdict tổng, confidence, danh sách sub-claims và nguồn bằng chứng.
+### Các bước tiếp theo
+
+1. **Kết nối frontend**
+   - Gửi input từ giao diện sang `/api/chat`.
+   - Hiển thị verdict, confidence, sub-claims và sources.
+
+2. **Tiếp tục tinh chỉnh retrieval/judge**
+   - Cải thiện nguồn web theo từng môn và từng loại claim.
+   - Tăng chất lượng source được chọn trong response cuối.
+
+3. **Bổ sung bộ claim đánh giá**
+   - Tạo danh sách claim mẫu `SUPPORTED / REFUTED / NEI` để test regression sau mỗi lần chỉnh prompt/node.
+
+### Kiểm thử
+
+```bash
+cd backend
+python -X utf8 test_graph.py
+python -X utf8 test_graph_with_real_services.py --stage full
+python -X utf8 test_extract.py
+python -X utf8 test_judge.py
+python -X utf8 test_synthesize.py
+python -X utf8 test_search_web.py
+python -X utf8 test_rag.py
+python -X utf8 test_chat.py
+```
